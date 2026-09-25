@@ -45,11 +45,12 @@ fun stageColor(stage: Stage): Color = when (stage) {
     Stage.IDLE -> Color(0xFFB0B0B0)
 }
 
+/** Multi-line text, kept clear of the round edge. */
 @Composable
 private fun CenterText(text: String, color: Color = MaterialTheme.colorScheme.onSurface, size: Int = 13) {
     Text(
         text,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
         textAlign = TextAlign.Center,
         color = color,
         fontSize = size.sp,

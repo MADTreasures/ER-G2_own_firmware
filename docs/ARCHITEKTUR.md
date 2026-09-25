@@ -12,6 +12,12 @@ Die App baut auf [Faceclaw](https://github.com/jimrandomh/faceclaw) auf (Jim Bab
 
 Die Bilder zeigen das 640×480-Bild, das die App an die Brille schicken würde, in den 16 Grüntönen des Displays. Erzeugt hat sie der eigene Renderer der App mit Androids Schrift, nicht die Brille (siehe [Bilder neu erzeugen](#bilder-neu-erzeugen)).
 
+Auf der Uhr, gerendert für ein rundes Display mit 454 Pixeln (grau: außerhalb des Zifferblatts):
+
+| Touchpad, verbunden | Vorschau ohne Brille | Firmware passt nicht |
+|---|---|---|
+| ![Touchpad](bilder/uhr-touchpad.png) | ![Vorschau](bilder/uhr-vorschau.png) | ![Firmware passt nicht](bilder/uhr-firmware-passt-nicht.png) |
+
 ## Stand (25.09.2026)
 
 | Situation | Was die App tut | Geprüft |
@@ -117,7 +123,7 @@ JDK 25 ist vorgegeben: `gradle/gradle-daemon-jvm.properties` verlangt Java 25 f�
 
 ```sh
 ./gradlew :app:assembleDebug                 # APK: app/build/outputs/apk/debug/app-debug.apk
-./gradlew :app:testDebugUnitTest             # 54 Tests der App (4 mit Robolectric), der Bild-Test wird übersprungen
+./gradlew :app:testDebugUnitTest             # 54 Tests der App (4 mit Robolectric); die 7 Bild-Tests werden übersprungen
 ./gradlew :faceclaw-core:testAndroidHostTest # Faceclaws 180 Tests gegen den übernommenen Kern
 ./gradlew :app:lintDebug
 ```
@@ -136,10 +142,10 @@ Stand 25.09.2026: Alle Tests sind grün. Lint meldet eine Warnung (`allowBackup`
 ### Bilder neu erzeugen
 
 ```sh
-./gradlew :app:testDebugUnitTest --tests '*RenderSnapshotTest*' -PsnapshotDir=$PWD/docs/bilder
+./gradlew :app:testDebugUnitTest --tests '*SnapshotTest*' -PsnapshotDir=$PWD/docs/bilder
 ```
 
-Ohne `-PsnapshotDir` wird der Test übersprungen.
+`RenderSnapshotTest` zeichnet die Brillenbilder, `WatchSnapshotTest` die Uhr-Bildschirme (Robolectric mit nativer Grafik). Ohne `-PsnapshotDir` werden beide übersprungen.
 
 ### Faceclaw aktualisieren
 
