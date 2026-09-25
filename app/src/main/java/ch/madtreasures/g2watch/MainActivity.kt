@@ -91,6 +91,12 @@ class MainActivity : ComponentActivity() {
         }
 
         fun connect(title: String, right: String, left: String?) {
+            if (missingPermissions().isNotEmpty()) {
+                // Revoked since the list was shown: ask again first.
+                permissionTick++
+                screen = Screen.DEVICES
+                return
+            }
             scanner.stop()
             app.saveLastPair(title, right, left)
             glasses.connect(title, right, left)

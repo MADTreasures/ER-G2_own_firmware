@@ -1,5 +1,6 @@
 package ch.madtreasures.g2watch.glasses
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.util.Log
@@ -27,12 +29,19 @@ class GlassesService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: getString(R.string.notification_connected)
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            notification(this, text),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-        )
+        try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification(this, text),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } catch (e: RuntimeException) {
+            // For example the app went to the background in between. The connection still
+            // runs while the app is open; the service just must not take the app down.
+            Log.w(TAG, "not in the foreground", e)
+            stopSelf()
+        }
         // Without the process there is no connection to keep, so no restart.
         return START_NOT_STICKY
     }
@@ -45,6 +54,14 @@ class GlassesService : Service() {
 
         /** Call while the app is in the foreground (Android refuses it from the background). */
         fun start(context: Context, text: String) {
+            // A connectedDevice service needs the Bluetooth permission; the connection itself
+            // fails without it anyway and says so.
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w(TAG, "no Bluetooth permission, no foreground service")
+                return
+            }
             try {
                 ContextCompat.startForegroundService(
                     context,
