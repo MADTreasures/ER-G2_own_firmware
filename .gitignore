@@ -13,3 +13,4 @@
 !/release/*.apk
 .kotlin/
 /faceclaw-core/build/
+/faceclaw-android/build/

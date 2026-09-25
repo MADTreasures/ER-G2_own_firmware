@@ -1,0 +1,299 @@
+package ch.madtreasures.g2watch.glasses
+
+import ch.madtreasures.g2watch.FakeDisplay
+import ch.madtreasures.g2watch.FakeScheduler
+import ch.madtreasures.g2watch.FakeText
+import ch.madtreasures.g2watch.desktop.AppId
+import ch.madtreasures.g2watch.desktop.DesktopController
+import com.faceclaw.app.BleProtocol
+import com.faceclaw.app.FaceclawBleCommunicatorListener
+import com.faceclaw.app.FaceclawDeviceInfoProbeListener
+import com.faceclaw.app.SessionLogLevel
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.time.LocalDateTime
+
+class GlassesConnectionTest {
+    private class FakeProbe(val right: String, val left: String) : FirmwareProbe {
+        var listener: FaceclawDeviceInfoProbeListener? = null
+        var closed = false
+
+        override fun start(listener: FaceclawDeviceInfoProbeListener) {
+            this.listener = listener
+        }
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    private class FakeSession(val right: String, val left: String) : GlassesSession {
+        override val display = FakeDisplay()
+        var listener: FaceclawBleCommunicatorListener? = null
+        var listening = false
+        var screenOn: Boolean? = null
+        var closed = false
+
+        override fun start(listener: FaceclawBleCommunicatorListener) {
+            this.listener = listener
+            listening = true
+        }
+
+        override fun stopListening() {
+            listening = false
+        }
+
+        override fun setScreenOn(on: Boolean) {
+            screenOn = on
+        }
+
+        override fun sweepFrameTimings() = Unit
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    private class FakeParts : GlassesParts {
+        val probes = mutableListOf<FakeProbe>()
+        val sessions = mutableListOf<FakeSession>()
+        val foreground = mutableListOf<String>()
+
+        override fun probe(right: String, left: String) = FakeProbe(right, left).also { probes += it }
+
+        override fun session(right: String, left: String, log: (SessionLogLevel, String) -> Unit) =
+            FakeSession(right, left).also { sessions += it }
+
+        override fun showForeground(text: String) {
+            foreground += "show"
+        }
+
+        override fun updateForeground(text: String) {
+            foreground += "update"
+        }
+
+        override fun stopForeground() {
+            foreground += "stop"
+        }
+    }
+
+    private val loop = FakeScheduler()
+    private val desktopScheduler = FakeScheduler()
+    private val desktop = DesktopController(
+        FakeText(),
+        desktopScheduler,
+        nowMs = { desktopScheduler.now },
+        now = { LocalDateTime.of(2026, 9, 25, 14, 5) },
+    )
+    private val parts = FakeParts()
+    private val connection = GlassesConnection(desktop, parts, loop, loop)
+
+    private val state get() = connection.state.value
+
+    private fun settle() {
+        repeat(3) {
+            loop.runPending()
+            desktopScheduler.runPending()
+        }
+    }
+
+    /** Connects and answers the firmware check with [extension]. */
+    private fun checkWith(extension: String, left: String? = LEFT) {
+        connection.connect("G2 Test", RIGHT, left)
+        settle()
+        val probe = parts.probes.last()
+        probe.listener!!.onResult("2.3.0.24", "2.3.0.24", extension)
+        settle()
+    }
+
+    /** The session after a successful check, started and reporting "connected". */
+    private fun connected(): FakeSession {
+        checkWith("Faceclaw/34")
+        loop.advanceBy(2_000)
+        settle()
+        val session = parts.sessions.single()
+        session.listener!!.onStateChange("connected", "Connected.")
+        settle()
+        return session
+    }
+
+    @Test
+    fun `the check runs first and alone`() {
+        connection.connect("G2 Test", RIGHT, LEFT)
+        settle()
+        assertEquals(Stage.CHECKING, state.stage)
+        val probe = parts.probes.single()
+        assertEquals(RIGHT, probe.right)
+        assertEquals(LEFT, probe.left)
+        assertTrue(parts.sessions.isEmpty())
+        assertEquals(listOf("show"), parts.foreground)
+    }
+
+    @Test
+    fun `stock firmware never gets a session`() {
+        checkWith("")
+        loop.advanceBy(10_000)
+        settle()
+        assertEquals(Stage.INCOMPATIBLE, state.stage)
+        assertEquals(FirmwareKind.STOCK, state.firmware?.kind)
+        assertTrue(state.detail.contains("Original-Firmware"))
+        assertTrue(parts.sessions.isEmpty())
+        assertTrue(parts.probes.single().closed)
+        assertEquals("stop", parts.foreground.last())
+    }
+
+    @Test
+    fun `older Faceclaw and foreign firmware never get a session`() {
+        for (extension in listOf("Faceclaw/22", "EVENCFW/22 img640", "OtherCFW/3")) {
+            checkWith(extension)
+            loop.advanceBy(10_000)
+            settle()
+            assertEquals(extension, Stage.INCOMPATIBLE, state.stage)
+        }
+        assertTrue(parts.sessions.isEmpty())
+    }
+
+    @Test
+    fun `a failed check never gets a session`() {
+        connection.connect("G2 Test", RIGHT, LEFT)
+        settle()
+        parts.probes.single().listener!!.onError("no response")
+        loop.advanceBy(10_000)
+        settle()
+        assertEquals(Stage.FAILED, state.stage)
+        assertTrue(state.detail.contains("no response"))
+        assertTrue(parts.sessions.isEmpty())
+    }
+
+    @Test
+    fun `Faceclaw 34 starts the session after the check`() {
+        checkWith("Faceclaw/34")
+        assertEquals(Stage.CONNECTING, state.stage)
+        assertTrue(parts.sessions.isEmpty())
+        loop.advanceBy(2_000)
+        settle()
+        val session = parts.sessions.single()
+        assertEquals(RIGHT, session.right)
+        assertEquals(LEFT, session.left)
+        assertTrue(session.listening)
+        // The desktop is mirrored to the session's compositor.
+        assertTrue(session.display.submitsOf("desktop").isNotEmpty())
+        assertTrue(session.display.submitsOf("pointer").isNotEmpty())
+    }
+
+    @Test
+    fun `compatible firmware without the left arm stops before the session`() {
+        checkWith("Faceclaw/34", left = null)
+        loop.advanceBy(10_000)
+        settle()
+        assertEquals(Stage.FAILED, state.stage)
+        assertTrue(parts.sessions.isEmpty())
+    }
+
+    @Test
+    fun `a check that is no longer wanted is ignored`() {
+        connection.connect("G2 Test", RIGHT, LEFT)
+        settle()
+        val listener = parts.probes.single().listener!!
+        connection.disconnect()
+        settle()
+        listener.onResult("2.3.0.24", "2.3.0.24", "Faceclaw/34")
+        loop.advanceBy(10_000)
+        settle()
+        assertEquals(Stage.IDLE, state.stage)
+        assertTrue(parts.sessions.isEmpty())
+    }
+
+    @Test
+    fun `connected holds the wake lock and charging releases it`() {
+        val session = connected()
+        assertEquals(Stage.CONNECTED, state.stage)
+        assertEquals(true, session.screenOn)
+        session.listener!!.onStateChange("charging", "Charging")
+        settle()
+        assertEquals(Stage.CHARGING, state.stage)
+        assertEquals(false, session.screenOn)
+    }
+
+    @Test
+    fun `the session reporting other firmware ends it`() {
+        val session = connected()
+        session.listener!!.onFirmwareInfo("2.3.0.24", "2.3.0.24", "")
+        settle()
+        assertEquals(Stage.INCOMPATIBLE, state.stage)
+        assertFalse(session.listening)
+        assertTrue(session.closed)
+    }
+
+    @Test
+    fun `a session report without data keeps it`() {
+        val session = connected()
+        session.listener!!.onFirmwareInfo("", "", "")
+        settle()
+        assertEquals(Stage.CONNECTED, state.stage)
+        assertFalse(session.closed)
+    }
+
+    @Test
+    fun `a temple tap clicks at the pointer`() {
+        val session = connected()
+        // Pointer onto the "Uhr" tile, then tap the right temple.
+        val tile = desktop.layout.tiles.first { it.first == AppId.CLOCK }.second
+        desktop.moveBy((tile.x + tile.w / 2 - 320).toFloat(), (tile.y + tile.h / 2 - 240).toFloat())
+        desktopScheduler.advanceBy(100)
+        val before = session.display.submitsOf("desktop").size
+        session.listener!!.onRingEvent(
+            "sys-event", "", BleProtocol.EVENT_CLICK, BleProtocol.EVENT_SOURCE_GLASSES_R, 0, 0, 0L, 0, 0, 0,
+        )
+        settle()
+        assertEquals("Tipp (rechter Bügel)", state.lastInput)
+        assertEquals(before + 1, session.display.submitsOf("desktop").size)
+    }
+
+    @Test
+    fun `battery goes to the state and the desktop`() {
+        val session = connected()
+        session.listener!!.onBatteryState(81, 1, -1, -1)
+        settle()
+        assertEquals(81, state.battery)
+        assertTrue(state.charging)
+        // An unavailable reading keeps the last level.
+        session.listener!!.onBatteryState(-1, 0, -1, -1)
+        settle()
+        assertEquals(81, state.battery)
+    }
+
+    @Test
+    fun `disconnect closes the session and ends the foreground service`() {
+        val session = connected()
+        connection.disconnect()
+        settle()
+        assertEquals(Stage.IDLE, state.stage)
+        assertFalse(session.listening)
+        assertTrue(session.closed)
+        assertEquals("stop", parts.foreground.last())
+        // Detached: the desktop no longer sends to the old session.
+        val sent = session.display.submits.size
+        desktop.click()
+        desktop.moveBy(50f, 0f)
+        desktopScheduler.advanceBy(100)
+        assertEquals(sent, session.display.submits.size)
+    }
+
+    @Test
+    fun `losing the pairing fails the connection`() {
+        val session = connected()
+        session.listener!!.onStateChange("unpaired", "not paired")
+        settle()
+        assertEquals(Stage.FAILED, state.stage)
+        assertTrue(state.detail.contains("nicht mehr mit der Brille gekoppelt"))
+        assertTrue(session.closed)
+    }
+
+    private companion object {
+        const val RIGHT = "AA:BB:CC:DD:EE:01"
+        const val LEFT = "AA:BB:CC:DD:EE:02"
+    }
+}

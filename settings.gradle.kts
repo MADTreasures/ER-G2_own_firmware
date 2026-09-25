@@ -27,3 +27,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "G2Watch"
 include(":faceclaw-core")
+include(":faceclaw-android")
+include(":app")
