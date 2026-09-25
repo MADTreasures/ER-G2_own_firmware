@@ -18,6 +18,8 @@ kotlin {
         namespace = "com.faceclaw.shared"
         compileSdk = 37
         minSdk = 30
+        // Faceclaw's host tests include Java fixtures.
+        withJava()
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
