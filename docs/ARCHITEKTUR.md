@@ -4,19 +4,27 @@
 
 Die App baut auf [Faceclaw](https://github.com/jimrandomh/faceclaw) auf (Jim Babcock, GPL-3.0). Faceclaws Kotlin-Kern mit Bluetooth-Protokoll, Sitzung und Compositor ist unverändert übernommen. Neu geschrieben sind nur der Wear-OS-Teil und der Desktop.
 
-| Start | Fenster „Zeiger“ |
+| Start | Fenster „Uhr“ |
 |---|---|
-| ![Desktop mit Kacheln](bilder/desktop-start.png) | ![Fenster Zeiger](bilder/desktop-zeiger.png) |
-| **Fenster „Uhr“** | **Fenster „Hilfe“** |
-| ![Fenster Uhr](bilder/desktop-uhr.png) | ![Fenster Hilfe](bilder/desktop-hilfe.png) |
+| ![Desktop mit Kacheln](bilder/desktop-start.png) | ![Fenster Uhr](bilder/desktop-uhr.png) |
+| **Fenster „Notiz“** | **Fenster „Zähler“** (3× auf „+“ geklickt) |
+| ![Fenster Notiz](bilder/desktop-notiz.png) | ![Fenster Zähler](bilder/desktop-zaehler.png) |
+| **Fenster „Zeiger“** | **Fenster „Info“** |
+| ![Fenster Zeiger](bilder/desktop-zeiger.png) | ![Fenster Info](bilder/desktop-info.png) |
+| **Fenster „Hilfe“** | |
+| ![Fenster Hilfe](bilder/desktop-hilfe.png) | |
 
-Die Bilder zeigen das 640×480-Bild, das die App an die Brille schicken würde, in den 16 Grüntönen des Displays. Erzeugt hat sie der eigene Renderer der App mit Androids Schrift, nicht die Brille (siehe [Bilder neu erzeugen](#bilder-neu-erzeugen)).
+Die Bilder zeigen das 640×480-Bild, das die App an die Brille schicken würde, in den 16 Grüntönen des Displays. Grün leuchtet; Schwarz leuchtet nicht und ist auf der Brille durchsichtig. Ein heller, dicker Rahmen markiert das Element unter dem Zeiger. Erzeugt hat die Bilder der eigene Renderer der App mit Androids Schrift, nicht die Brille (siehe [Bilder neu erzeugen](#bilder-neu-erzeugen)).
 
-Auf der Uhr, gerendert für ein rundes Display mit 454 Pixeln (grau: außerhalb des Zifferblatts):
+Auf der Uhr, gerendert für ein rundes Display mit 454 Pixeln (grau: außerhalb des Zifferblatts), in der Reihenfolge des Ablaufs:
 
-| Touchpad, verbunden | Vorschau ohne Brille | Firmware passt nicht |
+| Berechtigung | Brille wählen | Firmware-Prüfung |
 |---|---|---|
-| ![Touchpad](bilder/uhr-touchpad.png) | ![Vorschau](bilder/uhr-vorschau.png) | ![Firmware passt nicht](bilder/uhr-firmware-passt-nicht.png) |
+| ![Berechtigung](bilder/uhr-berechtigung.png) | ![Brille wählen](bilder/uhr-geraete.png) | ![Firmware-Prüfung](bilder/uhr-pruefung.png) |
+| **Firmware passt nicht** | **Touchpad, verbunden** | **Vorschau ohne Brille** |
+| ![Firmware passt nicht](bilder/uhr-firmware-passt-nicht.png) | ![Touchpad](bilder/uhr-touchpad.png) | ![Vorschau](bilder/uhr-vorschau.png) |
+| **Menü** (Finger halten) | **Protokoll** | |
+| ![Menü](bilder/uhr-menue.png) | ![Protokoll](bilder/uhr-protokoll.png) | |
 
 ## Stand (25.09.2026)
 
@@ -123,7 +131,7 @@ JDK 25 ist vorgegeben: `gradle/gradle-daemon-jvm.properties` verlangt Java 25 f�
 
 ```sh
 ./gradlew :app:assembleDebug                 # APK: app/build/outputs/apk/debug/app-debug.apk
-./gradlew :app:testDebugUnitTest             # 65 Tests der App (8 mit Robolectric); die 7 Bild-Tests werden übersprungen
+./gradlew :app:testDebugUnitTest             # 65 Tests der App (8 mit Robolectric); die 9 Bild-Tests werden übersprungen
 ./gradlew :faceclaw-core:testAndroidHostTest # Faceclaws 180 Tests gegen den übernommenen Kern
 ./gradlew :app:lintDebug
 ```

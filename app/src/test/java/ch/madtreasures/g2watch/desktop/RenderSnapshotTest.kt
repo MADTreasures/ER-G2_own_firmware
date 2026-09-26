@@ -71,12 +71,28 @@ class RenderSnapshotTest {
         controller.back()
         scheduler.runPending()
 
-        for (app in listOf(AppId.CLOCK, AppId.HELP)) {
+        fun button(app: AppId, id: ButtonId) = controller.layout.buttons(app).first { it.first == id }.second
+
+        moveTo(tile(AppId.COUNTER).x + 60, tile(AppId.COUNTER).y + 40)
+        controller.click()
+        scheduler.runPending()
+        val plus = button(AppId.COUNTER, ButtonId.PLUS)
+        moveTo(plus.x + plus.w / 2, plus.y + plus.h / 2)
+        repeat(3) { controller.click() }
+        scheduler.runPending()
+        save("desktop-zaehler")
+        controller.back()
+        scheduler.runPending()
+
+        // The other windows with the pointer on their close box.
+        val close = controller.layout.closeButton
+        val names = mapOf(AppId.CLOCK to "uhr", AppId.NOTE to "notiz", AppId.INFO to "info", AppId.HELP to "hilfe")
+        for ((app, name) in names) {
             moveTo(tile(app).x + 60, tile(app).y + 40)
             controller.click()
             scheduler.runPending()
-            moveTo(620, 110)
-            save("desktop-" + app.title.lowercase())
+            moveTo(close.x + close.w / 2, close.y + close.h / 2)
+            save("desktop-$name")
             controller.back()
             scheduler.runPending()
         }

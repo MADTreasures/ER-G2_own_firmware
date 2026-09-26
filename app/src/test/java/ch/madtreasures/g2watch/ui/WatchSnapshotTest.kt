@@ -42,7 +42,7 @@ import java.time.LocalDateTime
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [35], qualifiers = "w227dp-h227dp-round-watch-xhdpi", application = android.app.Application::class)
+@Config(sdk = [35], qualifiers = "de-rDE-w227dp-h227dp-round-watch-xhdpi", application = android.app.Application::class)
 class WatchSnapshotTest {
     @get:Rule
     val compose = createComposeRule()
@@ -151,5 +151,24 @@ class WatchSnapshotTest {
     @Test
     fun menu() = snapshot("uhr-menue") {
         MenuScreen(connected, 1.2f, {}, {}, {}, {}, {}, {}, {})
+    }
+
+    @Test
+    fun log() = snapshot("uhr-protokoll") {
+        LogScreen(
+            listOf(
+                "14:05:01 Verbinde mit G2 A1B2 (R AA:BB:CC:DD:EE:01, L AA:BB:CC:DD:EE:02)",
+                "14:05:03 security auth: right lens, bond state BONDED",
+                "14:05:04 device-info: L=2.3.0.24 R=2.3.0.24 ext=[]",
+                "14:05:04 Firmware: Original 2.3.0.24 – Die Brille hat die Original-Firmware " +
+                    "(L=2.3.0.24 R=2.3.0.24). Diese App braucht Faceclaw-Firmware Revision 34.",
+            ),
+            {},
+        )
+    }
+
+    @Test
+    fun permission() = snapshot("uhr-berechtigung") {
+        PermissionScreen({}, {}, {})
     }
 }
