@@ -16,25 +16,39 @@ import org.junit.Test
 import java.time.LocalDateTime
 
 class GlassesConnectionTest {
-    private class FakeProbe(val right: String, val left: String) : FirmwareProbe {
+    // Separate fakes for the main thread and the worker, so tests can see where things run.
+    private val main = FakeScheduler()
+    private val worker = FakeScheduler()
+    private val desktopScheduler = FakeScheduler()
+
+    private inner class FakeProbe(val right: String, val left: String) : FirmwareProbe {
         var listener: FaceclawDeviceInfoProbeListener? = null
+        var listening = false
         var closed = false
+        var closedOnWorker = false
 
         override fun start(listener: FaceclawDeviceInfoProbeListener) {
             this.listener = listener
+            listening = true
+        }
+
+        override fun stopListening() {
+            listening = false
         }
 
         override fun close() {
             closed = true
+            closedOnWorker = worker.inTask && !main.inTask
         }
     }
 
-    private class FakeSession(val right: String, val left: String) : GlassesSession {
+    private inner class FakeSession(val right: String, val left: String) : GlassesSession {
         override val display = FakeDisplay()
         var listener: FaceclawBleCommunicatorListener? = null
         var listening = false
         var screenOn: Boolean? = null
         var closed = false
+        var closedOnWorker = false
 
         override fun start(listener: FaceclawBleCommunicatorListener) {
             this.listener = listener
@@ -53,18 +67,29 @@ class GlassesConnectionTest {
 
         override fun close() {
             closed = true
+            closedOnWorker = worker.inTask && !main.inTask
         }
     }
 
-    private class FakeParts : GlassesParts {
+    private inner class FakeParts : GlassesParts {
         val probes = mutableListOf<FakeProbe>()
         val sessions = mutableListOf<FakeSession>()
         val foreground = mutableListOf<String>()
+        var bluetoothMissing = false
 
-        override fun probe(right: String, left: String) = FakeProbe(right, left).also { probes += it }
+        /** Whether every earlier session was already closed when the latest probe was created. */
+        var sessionsClosedAtLastProbe = true
 
-        override fun session(right: String, left: String, log: (SessionLogLevel, String) -> Unit) =
-            FakeSession(right, left).also { sessions += it }
+        override fun probe(right: String, left: String): FirmwareProbe {
+            if (bluetoothMissing) throw IllegalStateException("Bluetooth adapter unavailable")
+            sessionsClosedAtLastProbe = sessions.all { it.closed }
+            return FakeProbe(right, left).also { probes += it }
+        }
+
+        override fun session(right: String, left: String, log: (SessionLogLevel, String) -> Unit): GlassesSession {
+            if (bluetoothMissing) throw IllegalStateException("Bluetooth adapter unavailable")
+            return FakeSession(right, left).also { sessions += it }
+        }
 
         override fun showForeground(text: String) {
             foreground += "show"
@@ -79,8 +104,6 @@ class GlassesConnectionTest {
         }
     }
 
-    private val loop = FakeScheduler()
-    private val desktopScheduler = FakeScheduler()
     private val desktop = DesktopController(
         FakeText(),
         desktopScheduler,
@@ -88,22 +111,30 @@ class GlassesConnectionTest {
         now = { LocalDateTime.of(2026, 9, 25, 14, 5) },
     )
     private val parts = FakeParts()
-    private val connection = GlassesConnection(desktop, parts, loop, loop)
+    private val connection = GlassesConnection(desktop, parts, main, worker)
 
     private val state get() = connection.state.value
 
     private fun settle() {
-        repeat(3) {
-            loop.runPending()
+        repeat(4) {
+            main.runPending()
+            worker.runPending()
             desktopScheduler.runPending()
         }
     }
+
+    /** Lets [ms] pass on the worker, where the delayed steps are scheduled. */
+    private fun advance(ms: Long) {
+        worker.advanceBy(ms)
+        settle()
+    }
+
+    private val probe get() = parts.probes.last()
 
     /** Connects and answers the firmware check with [extension]. */
     private fun checkWith(extension: String, left: String? = LEFT) {
         connection.connect("G2 Test", RIGHT, left)
         settle()
-        val probe = parts.probes.last()
         probe.listener!!.onResult("2.3.0.24", "2.3.0.24", extension)
         settle()
     }
@@ -111,8 +142,7 @@ class GlassesConnectionTest {
     /** The session after a successful check, started and reporting "connected". */
     private fun connected(): FakeSession {
         checkWith("Faceclaw/34")
-        loop.advanceBy(2_000)
-        settle()
+        advance(2_000)
         val session = parts.sessions.single()
         session.listener!!.onStateChange("connected", "Connected.")
         settle()
@@ -134,8 +164,7 @@ class GlassesConnectionTest {
     @Test
     fun `stock firmware never gets a session`() {
         checkWith("")
-        loop.advanceBy(10_000)
-        settle()
+        advance(10_000)
         assertEquals(Stage.INCOMPATIBLE, state.stage)
         assertEquals(FirmwareKind.STOCK, state.firmware?.kind)
         assertTrue(state.detail.contains("Original-Firmware"))
@@ -148,8 +177,7 @@ class GlassesConnectionTest {
     fun `older Faceclaw and foreign firmware never get a session`() {
         for (extension in listOf("Faceclaw/22", "EVENCFW/22 img640", "OtherCFW/3")) {
             checkWith(extension)
-            loop.advanceBy(10_000)
-            settle()
+            advance(10_000)
             assertEquals(extension, Stage.INCOMPATIBLE, state.stage)
         }
         assertTrue(parts.sessions.isEmpty())
@@ -160,8 +188,7 @@ class GlassesConnectionTest {
         connection.connect("G2 Test", RIGHT, LEFT)
         settle()
         parts.probes.single().listener!!.onError("no response")
-        loop.advanceBy(10_000)
-        settle()
+        advance(10_000)
         assertEquals(Stage.FAILED, state.stage)
         assertTrue(state.detail.contains("no response"))
         assertTrue(parts.sessions.isEmpty())
@@ -172,8 +199,7 @@ class GlassesConnectionTest {
         checkWith("Faceclaw/34")
         assertEquals(Stage.CONNECTING, state.stage)
         assertTrue(parts.sessions.isEmpty())
-        loop.advanceBy(2_000)
-        settle()
+        advance(2_000)
         val session = parts.sessions.single()
         assertEquals(RIGHT, session.right)
         assertEquals(LEFT, session.left)
@@ -186,8 +212,7 @@ class GlassesConnectionTest {
     @Test
     fun `compatible firmware without the left arm stops before the session`() {
         checkWith("Faceclaw/34", left = null)
-        loop.advanceBy(10_000)
-        settle()
+        advance(10_000)
         assertEquals(Stage.FAILED, state.stage)
         assertTrue(parts.sessions.isEmpty())
     }
@@ -200,8 +225,7 @@ class GlassesConnectionTest {
         connection.disconnect()
         settle()
         listener.onResult("2.3.0.24", "2.3.0.24", "Faceclaw/34")
-        loop.advanceBy(10_000)
-        settle()
+        advance(10_000)
         assertEquals(Stage.IDLE, state.stage)
         assertTrue(parts.sessions.isEmpty())
     }
@@ -290,6 +314,83 @@ class GlassesConnectionTest {
         assertEquals(Stage.FAILED, state.stage)
         assertTrue(state.detail.contains("nicht mehr mit der Brille gekoppelt"))
         assertTrue(session.closed)
+    }
+
+    @Test
+    fun `Bluetooth waits never block the main thread`() {
+        // Faceclaw's BLE manager holds its lock during GATT waits of up to 5 s; closing the probe
+        // or the session has to wait for it, so both happen on the worker.
+        checkWith("Faceclaw/34")
+        assertTrue(probe.closed)
+        assertTrue("probe closed on the main thread", probe.closedOnWorker)
+        advance(2_000)
+        val session = parts.sessions.single()
+        connection.disconnect()
+        settle()
+        assertTrue(session.closed)
+        assertTrue("session closed on the main thread", session.closedOnWorker)
+    }
+
+    @Test
+    fun `cancelling a running check silences it at once and closes it on the worker`() {
+        connection.connect("G2 Test", RIGHT, LEFT)
+        settle()
+        connection.disconnect()
+        assertFalse(probe.listening)
+        assertFalse(probe.closed)
+        settle()
+        assertTrue(probe.closedOnWorker)
+        assertEquals(Stage.IDLE, state.stage)
+    }
+
+    @Test
+    fun `a new check starts only after the old session is closed`() {
+        connected()
+        connection.connect("G2 Test", RIGHT, LEFT)
+        settle()
+        assertEquals(2, parts.probes.size)
+        assertTrue(parts.sessionsClosedAtLastProbe)
+    }
+
+    @Test
+    fun `no Bluetooth adapter fails instead of crashing`() {
+        parts.bluetoothMissing = true
+        connection.connect("G2 Test", RIGHT, LEFT)
+        settle()
+        assertEquals(Stage.FAILED, state.stage)
+        assertTrue(parts.sessions.isEmpty())
+        assertEquals("stop", parts.foreground.last())
+    }
+
+    @Test
+    fun `a session that cannot be created fails`() {
+        checkWith("Faceclaw/34")
+        parts.bluetoothMissing = true
+        advance(2_000)
+        assertEquals(Stage.FAILED, state.stage)
+        assertTrue(parts.sessions.isEmpty())
+    }
+
+    @Test
+    fun `reconnecting releases the wake lock until connected again`() {
+        val session = connected()
+        session.listener!!.onStateChange("retrying", "Reconnecting...")
+        settle()
+        assertEquals(Stage.RECONNECTING, state.stage)
+        assertEquals(false, session.screenOn)
+        session.listener!!.onStateChange("connected", "Connected.")
+        settle()
+        assertEquals(true, session.screenOn)
+    }
+
+    @Test
+    fun `a session that ends itself is cleaned up`() {
+        val session = connected()
+        session.listener!!.onStateChange("disconnected", "Disconnected.")
+        settle()
+        assertEquals(Stage.IDLE, state.stage)
+        assertTrue(session.closed)
+        assertEquals("stop", parts.foreground.last())
     }
 
     private companion object {

@@ -9,6 +9,10 @@ class FakeScheduler : Scheduler {
     var now = 0L
         private set
 
+    /** True while one of this scheduler's tasks runs, i.e. "on this thread". */
+    var inTask = false
+        private set
+
     private class Task(val due: Long, val seq: Long, val action: () -> Unit)
 
     private val tasks = ArrayList<Task>()
@@ -27,7 +31,13 @@ class FakeScheduler : Scheduler {
         while (true) {
             val next = nextDue(now) ?: return
             tasks.remove(next)
-            next.action()
+            val outer = inTask
+            inTask = true
+            try {
+                next.action()
+            } finally {
+                inTask = outer
+            }
         }
     }
 

@@ -17,7 +17,13 @@ import com.faceclaw.app.SessionLogLevel
 interface FirmwareProbe {
     fun start(listener: FaceclawDeviceInfoProbeListener)
 
-    /** Cancels a running probe and closes its links; no callbacks afterwards. */
+    /** No more listener callbacks. Cheap, any thread. */
+    fun stopListening()
+
+    /**
+     * Cancels the probe and closes its links. Blocks while a GATT operation is in flight
+     * (Faceclaw's BLE manager holds its lock for up to 5 s), so never on the main thread.
+     */
     fun close()
 }
 
@@ -43,6 +49,7 @@ interface GlassesSession {
 
 /** What [GlassesConnection] needs from the platform: Faceclaw's Android classes, or fakes in tests. */
 interface GlassesParts {
+    /** Throws [IllegalStateException] when Bluetooth is unavailable. */
     fun probe(right: String, left: String): FirmwareProbe
 
     /** Throws [IllegalStateException] when Bluetooth is unavailable. */
@@ -67,10 +74,9 @@ class FaceclawParts(context: Context) : GlassesParts {
                 probe.start()
             }
 
-            override fun close() {
-                probe.setListener(null)
-                probe.close()
-            }
+            override fun stopListening() = probe.setListener(null)
+
+            override fun close() = probe.close()
         }
     }
 

@@ -30,9 +30,10 @@ import java.time.format.DateTimeFormatter
  *
  * With any other firmware the app stops after step 1 and says why. It never writes firmware.
  *
- * Public methods and all callbacks run on [main]. Blocking Faceclaw calls (closing a session
- * waits for its worker) run on [worker], one after the other, so a new connection starts only
- * after the previous one has released the Bluetooth links.
+ * Public methods and all callbacks run on [main]. Blocking Faceclaw calls run on [worker], one
+ * after the other: closing the probe waits for a GATT operation in flight, closing a session
+ * for its cleanup message and its worker. So a new connection starts only after the previous
+ * one has released the Bluetooth links, and the watch UI never waits for Bluetooth.
  */
 class GlassesConnection internal constructor(
     private val desktop: DesktopController,
@@ -98,7 +99,12 @@ class GlassesConnection internal constructor(
 
     private fun startProbe(gen: Int) {
         val t = target ?: return
-        val p = parts.probe(t.right, t.left.orEmpty())
+        val p = try {
+            parts.probe(t.right, t.left.orEmpty())
+        } catch (e: RuntimeException) {
+            fail("Bluetooth ist nicht verfügbar: ${e.message}")
+            return
+        }
         probe = p
         p.start(object : FaceclawDeviceInfoProbeListener {
             override fun onLog(line: String?) {
@@ -163,8 +169,8 @@ class GlassesConnection internal constructor(
             parts.session(t.right, left) { level, line ->
                 main.post { if (gen == generation) log(if (level == SessionLogLevel.ERROR) "FEHLER: $line" else "Warnung: $line") }
             }
-        } catch (e: IllegalStateException) {
-            fail("Bluetooth ist nicht verfügbar: ${e.message}")
+        } catch (e: RuntimeException) {
+            fail("Die Sitzung ließ sich nicht anlegen: ${e.message}")
             return
         }
         val a = Active(session)
@@ -197,7 +203,11 @@ class GlassesConnection internal constructor(
                 "charging" -> Stage.CHARGING
                 "retrying" -> Stage.RECONNECTING
                 "disconnecting" -> Stage.DISCONNECTING
-                "disconnected" -> Stage.IDLE
+                "disconnected" -> {
+                    // Only Faceclaw's own teardown says this; never leave a session behind it.
+                    stopWith(Stage.IDLE, "", _state.value.firmware)
+                    return
+                }
                 "unpaired" -> {
                     fail(
                         "Die Uhr ist nicht mehr mit der Brille gekoppelt. Die Brille in den Bluetooth-" +
@@ -208,9 +218,11 @@ class GlassesConnection internal constructor(
                 else -> Stage.CONNECTING
             }
             when (stage) {
-                // Keeps the watch CPU awake for the session while the glasses show the desktop.
+                // Keeps the watch CPU awake while the glasses show the desktop. Not while they
+                // charge in the case or are out of reach: retrying can go on for hours, and the
+                // watch wakes up often enough on its own to reconnect.
                 Stage.CONNECTED -> active?.session?.setScreenOn(true)
-                Stage.CHARGING -> active?.session?.setScreenOn(false)
+                Stage.CHARGING, Stage.RECONNECTING -> active?.session?.setScreenOn(false)
                 else -> Unit
             }
             setState(_state.value.copy(stage = stage, detail = status.orEmpty()))
@@ -315,7 +327,8 @@ class GlassesConnection internal constructor(
     private fun releaseProbe() {
         val p = probe ?: return
         probe = null
-        p.close()
+        p.stopListening()
+        worker.post { p.close() }
     }
 
     /** Detaches the desktop and closes the session on the worker; false if there was none. */

@@ -71,8 +71,12 @@ class MainActivity : ComponentActivity() {
         ) { permissionTick++ }
 
         // Keep the watch awake while it talks to the glasses: the touchpad stops working once
-        // Wear OS dims into ambient mode. Without glasses the screen times out as usual.
-        val keepAwake = state.stage.hasSession || state.stage.busy
+        // Wear OS dims into ambient mode. Not while the glasses charge or are out of reach
+        // (that can last hours), and not without glasses: then the screen times out as usual.
+        val keepAwake = when (state.stage) {
+            Stage.CHECKING, Stage.CONNECTING, Stage.CONNECTED, Stage.DISCONNECTING -> true
+            else -> false
+        }
         LaunchedEffect(keepAwake) {
             if (keepAwake) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

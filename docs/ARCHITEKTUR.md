@@ -112,10 +112,10 @@ Auf dem Desktop liegen sechs Kacheln: **Uhr** (große Uhrzeit), **Notiz** (Platz
 ## Laufzeit auf der Uhr
 
 - `G2WatchApp` hält Desktop und Verbindung für den ganzen Prozess. Die Verbindung überlebt deshalb, wenn die Activity neu entsteht.
-- `GlassesService` ist ein Vordergrunddienst vom Typ `connectedDevice`. Er läuft, solange geprüft oder verbunden wird, und zeigt eine laufende Mitteilung.
-- Solange die Brille den Desktop zeigt, hält `WearSessionHost` einen Partial Wake Lock, wie Faceclaw auf dem Telefon. Beim Laden der Brille und beim Trennen gibt er ihn frei.
-- Während einer Verbindung bleibt das Uhrdisplay an, weil das Touchpad im Ambient-Modus nicht funktioniert. Ohne Brille geht es wie gewohnt aus.
-- Threads: Der Desktop hat einen eigenen Thread, Faceclaws Sitzung einen Worker, und blockierende Aufrufe wie das Schließen einer Sitzung laufen nacheinander auf einem Verbindungs-Thread. Die Oberfläche bekommt alles über `StateFlow`.
+- `GlassesService` ist ein Vordergrunddienst vom Typ `connectedDevice`. Er läuft, solange geprüft oder verbunden wird, und zeigt eine laufende Mitteilung. Beendet wird er erst, wenn er im Vordergrund angekommen ist. Ein früheres Stoppen quittiert Android mit dem Beenden der ganzen App, was bei schnellem Verbinden und Abbrechen passieren könnte.
+- Solange die Brille den Desktop zeigt, hält `WearSessionHost` einen Partial Wake Lock, wie Faceclaw auf dem Telefon. Er wird freigegeben, wenn die Brille lädt, wenn die Verbindung abreißt und neu aufgebaut wird und wenn getrennt wird. Das Neuverbinden kann Stunden dauern, wenn die Brille außer Reichweite ist, und die Uhr wacht dafür oft genug von selbst auf.
+- Während der Prüfung und solange die Brille verbunden ist, bleibt das Uhrdisplay an, weil das Touchpad im Ambient-Modus nicht funktioniert. Lädt die Brille, ist sie außer Reichweite oder ist gar keine verbunden, geht es wie gewohnt aus.
+- Threads: Der Desktop hat einen eigenen Thread und Faceclaws Sitzung einen Worker. Alles, was auf Bluetooth warten kann, läuft nacheinander auf einem Verbindungs-Thread. Dazu gehört auch das Schließen der Firmware-Prüfung: Faceclaws `FaceclawBleManager` hält bei jedem GATT-Schritt bis zu 5 s eine Sperre, die auch das Schließen braucht. Die Oberfläche wartet so nie auf Bluetooth und bekommt alles über `StateFlow`.
 
 ## Bauen und testen
 
@@ -123,7 +123,7 @@ JDK 25 ist vorgegeben: `gradle/gradle-daemon-jvm.properties` verlangt Java 25 f�
 
 ```sh
 ./gradlew :app:assembleDebug                 # APK: app/build/outputs/apk/debug/app-debug.apk
-./gradlew :app:testDebugUnitTest             # 54 Tests der App (4 mit Robolectric); die 7 Bild-Tests werden übersprungen
+./gradlew :app:testDebugUnitTest             # 65 Tests der App (8 mit Robolectric); die 7 Bild-Tests werden übersprungen
 ./gradlew :faceclaw-core:testAndroidHostTest # Faceclaws 180 Tests gegen den übernommenen Kern
 ./gradlew :app:lintDebug
 ```
@@ -133,7 +133,8 @@ Stand 25.09.2026: Alle Tests sind grün. Lint meldet eine Warnung (`allowBackup`
 | Test | Prüft |
 |---|---|
 | `FirmwareRequirementTest` | dieselben Fälle wie Faceclaws `firmware-compat.test.cjs`, dazu die strengere Regel ohne Angabe |
-| `GlassesConnectionTest` | Ablauf mit Attrappen: keine Sitzung ohne passende Firmware, auch nicht bei veralteten Rückmeldungen. Die Sitzung startet erst nach der Prüfung und endet, wenn sie andere Firmware meldet. Dazu Tipp am Bügel, Akku und Trennen. |
+| `GlassesConnectionTest` | Ablauf mit Attrappen für Haupt- und Verbindungs-Thread: keine Sitzung ohne passende Firmware, auch nicht bei veralteten Rückmeldungen. Die Sitzung startet erst nach der Prüfung und endet, wenn sie andere Firmware meldet. Prüfung und Sitzung werden nie auf dem Haupt-Thread geschlossen, und eine neue Prüfung startet erst, wenn die alte Sitzung zu ist. Dazu fehlendes Bluetooth, Wake Lock, Tipp am Bügel, Akku und Trennen. |
+| `GlassesServiceTest` | Vordergrunddienst: kein Stopp vor dem Ankommen im Vordergrund, kein zweiter Start, nichts ohne Bluetooth-Berechtigung (Robolectric) |
 | `NoFlashingTest` | App-Code benutzt keine Flash-Abläufe |
 | `DesktopTest`, `DesktopControllerTest` | Layout im sichtbaren Streifen, Klicks, modale Fenster, gebündelte Zeigerbilder, Neuzeichnen nur bei Änderungen |
 | `PointerTest`, `GrayRasterTest` | Zeigerbewegung, Grenzen, Sprite, Zeichnen, Fingerabdruck |
